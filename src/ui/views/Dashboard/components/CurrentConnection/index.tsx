@@ -103,11 +103,6 @@ export const CurrentConnection = memo((props: CurrentConnectionProps) => {
     // Listen for messages from the background script
     chrome.runtime.onMessage.addListener(handleTabUpdate);
 
-    // TODO: implement event handler to detect when the dApp has connected to update UI
-    setInterval(() => {
-      getCurrentSite();
-    }, 5000);
-
     // Clean up the listener on component unmount
     return () => {
       chrome.runtime.onMessage.removeListener(handleTabUpdate);
