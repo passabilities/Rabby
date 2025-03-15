@@ -1,5 +1,7 @@
 import BigNumber from 'bignumber.js';
 
+const Sub_Numbers = '₀₁₂₃₄₅₆₇₈₉';
+
 export const splitNumberByStep = (
   num: number | string,
   step = 3,
@@ -19,6 +21,27 @@ export const splitNumberByStep = (
   return n.toFormat(fmt);
 };
 
+export const formatLittleNumber = (num: string, minLen = 8) => {
+  const bn = new BigNumber(num);
+  if (bn.toFixed().length > minLen) {
+    const s = bn.precision(4).toFormat();
+    const ss = s.replace(/^0.(0*)?(?:.*)/, (l, z) => {
+      const zeroLength = z.length;
+
+      const sub = `${zeroLength}`
+        .split('')
+        .map((x) => Sub_Numbers[x as any])
+        .join('');
+
+      const end = s.slice(zeroLength + 2);
+      return `0.0${sub}${end}`;
+    });
+
+    return ss;
+  }
+  return num;
+};
+
 export const formatTokenAmount = (
   amount: number | string,
   decimals = 4,
@@ -34,6 +57,9 @@ export const formatTokenAmount = (
   }
   if (moreDecimalsWhenNotEnough && bn.lt(0.00000001)) {
     return '<0.00000001';
+  }
+  if (bn.lte(0.0001)) {
+    return formatLittleNumber(bn.toFixed());
   }
   if (!split[1] || split[1].length < realDecimals) {
     return splitNumberByStep(bn.toFixed());
@@ -68,7 +94,7 @@ export const formatNumber = (
   num: string | number,
   decimal = 2,
   opt = {} as BigNumber.Format,
-  roundingMode = BigNumber.ROUND_UP as BigNumber.RoundingMode
+  roundingMode = BigNumber.ROUND_HALF_UP as BigNumber.RoundingMode
 ) => {
   const n = new BigNumber(num);
   const format = {
@@ -103,11 +129,8 @@ export const formatPrice = (price: string | number) => {
   }
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
-  if (price < 0.00001) {
-    if (price.toString().length > 10) {
-      return Number(price).toExponential(4);
-    }
-    return price.toString();
+  if (price < 0.0001) {
+    return formatLittleNumber(new BigNumber(price).toFixed(), 6);
   }
   return formatNumber(price, 4);
 };
@@ -119,7 +142,7 @@ export const intToHex = (n: number) => {
 
 export const formatUsdValue = (
   value: string | number,
-  roundingMode = BigNumber.ROUND_UP as BigNumber.RoundingMode
+  roundingMode = BigNumber.ROUND_HALF_UP as BigNumber.RoundingMode
 ) => {
   const bnValue = new BigNumber(value);
   if (bnValue.lt(0)) {
@@ -150,11 +173,9 @@ export const formatAmount = (amount: string | number, decimals = 4) => {
   if (amount > 1) return formatNumber(amount, 4);
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
-  if (amount < 0.00001) {
-    if (amount.toString().length > 10) {
-      return Number(amount).toExponential(4);
-    }
-    return amount.toString();
+  if (amount < 0.0001) {
+    const str = new BigNumber(amount).toFixed();
+    return formatLittleNumber(str);
   }
   return formatNumber(amount, decimals);
 };
@@ -212,7 +233,7 @@ export const formatGasCostUsd = (gasCostUsd: BigNumber) => {
 
 export const formatGasHeaderUsdValue = (
   value: string | number,
-  roundingMode = BigNumber.ROUND_UP as BigNumber.RoundingMode
+  roundingMode = BigNumber.ROUND_HALF_UP as BigNumber.RoundingMode
 ) => {
   const bnValue = new BigNumber(value);
   if (bnValue.lt(0)) {
@@ -224,4 +245,10 @@ export const formatGasHeaderUsdValue = (
   if (bnValue.lt(0.0001)) return '<$0.0001';
 
   return `$${formatNumber(value, 4, undefined, roundingMode)}`;
+};
+
+export const formatGasAccountUSDValue = (value: string | number) => {
+  const bnValue = new BigNumber(value);
+  if (bnValue.lt(0.0001)) return '<$0.0001';
+  return `$${formatNumber(value, 4)}`;
 };

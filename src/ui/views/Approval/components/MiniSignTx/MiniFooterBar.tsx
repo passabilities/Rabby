@@ -29,6 +29,7 @@ import { MiniCommonAction } from './MiniCommonAction';
 import { MiniLedgerAction } from './MiniLedgerAction';
 import { BatchSignTxTaskType } from './useBatchSignTxTask';
 import { GasAccountCheckResult } from '@/background/service/openapi';
+import { DrawerProps } from 'antd';
 
 interface Props extends Omit<ActionGroupProps, 'account'> {
   chain?: Chain;
@@ -60,6 +61,8 @@ interface Props extends Omit<ActionGroupProps, 'account'> {
   gasAccountCanPay?: boolean;
   noCustomRPC?: boolean;
   canGotoUseGasAccount?: boolean;
+  canDepositUseGasAccount?: boolean;
+  getContainer?: DrawerProps['getContainer'];
 }
 
 const Wrapper = styled.section`
@@ -173,7 +176,9 @@ export const MiniFooterBar: React.FC<Props> = ({
   gasAccountCanPay,
   noCustomRPC,
   canGotoUseGasAccount,
+  canDepositUseGasAccount,
   task,
+  getContainer,
   ...props
 }) => {
   const [account, setAccount] = React.useState<Account>();
@@ -296,6 +301,8 @@ export const MiniFooterBar: React.FC<Props> = ({
             gasLessFailedReason={gasLessFailedReason}
             canGotoUseGasAccount={canGotoUseGasAccount}
             onChangeGasAccount={onChangeGasAccount}
+            canDepositUseGasAccount={canDepositUseGasAccount}
+            miniFooter
           />
         )
       ) : null}
@@ -306,6 +313,7 @@ export const MiniFooterBar: React.FC<Props> = ({
           isGasAccountLogin={isGasAccountLogin}
           isWalletConnect={isWalletConnect}
           noCustomRPC={noCustomRPC}
+          miniFooter
         />
       ) : null}
     </>
@@ -323,6 +331,7 @@ export const MiniFooterBar: React.FC<Props> = ({
         <div className="pt-[10px]">
           {account.type === KEYRING_CLASS.HARDWARE.LEDGER ? (
             <MiniLedgerAction
+              key={gasMethod}
               task={task}
               account={account}
               gasLess={useGasLess && !payGasByGasAccount}
@@ -347,9 +356,11 @@ export const MiniFooterBar: React.FC<Props> = ({
                   : gasLessConfig?.theme_color
               }
               footer={footer}
+              getContainer={getContainer}
             ></MiniLedgerAction>
           ) : (
             <MiniCommonAction
+              key={gasMethod}
               task={task}
               account={account}
               gasLess={useGasLess && !payGasByGasAccount}

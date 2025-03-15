@@ -10,9 +10,9 @@ import { useTranslation } from 'react-i18next';
 import { TokenItem } from '@/background/service/openapi';
 import { BridgeQuoteItem } from './BridgeQuoteItem';
 import { ReactComponent as RCIconCCEmpty } from 'ui/assets/bridge/empty-cc.svg';
+import { DrawerProps } from 'antd';
 
 interface QuotesProps {
-  chain: CHAINS_ENUM;
   userAddress: string;
   loading: boolean;
   inSufficient: boolean;
@@ -23,10 +23,9 @@ interface QuotesProps {
   visible: boolean;
   onClose: () => void;
   payAmount: string;
-  setSelectedBridgeQuote: React.Dispatch<
-    React.SetStateAction<SelectedBridgeQuote | undefined>
-  >;
+  setSelectedBridgeQuote: (quote?: SelectedBridgeQuote) => void;
   sortIncludeGasFee: boolean;
+  getContainer?: DrawerProps['getContainer'];
 }
 
 export const Quotes = ({
@@ -104,7 +103,7 @@ const bodyStyle = {
 };
 
 export const QuoteList = (props: Omit<QuotesProps, 'sortIncludeGasFee'>) => {
-  const { visible, onClose } = props;
+  const { visible, onClose, getContainer } = props;
   const refresh = useSetRefreshId();
 
   const refreshQuote = React.useCallback(() => {
@@ -196,6 +195,7 @@ export const QuoteList = (props: Omit<QuotesProps, 'sortIncludeGasFee'>) => {
       className="isConnectView z-[999]"
       bodyStyle={bodyStyle}
       isSupportDarkMode
+      getContainer={getContainer}
     >
       <Quotes {...props} sortIncludeGasFee={sortIncludeGasFee} />
     </Popup>

@@ -35,11 +35,11 @@ import {
   GAS_TOP_UP_ADDRESS,
   ALIAS_ADDRESS,
 } from 'consts';
-import { addHexPrefix, isHexPrefixed, isHexString } from 'ethereumjs-util';
+import { addHexPrefix, isHexPrefixed, isHexString } from '@ethereumjs/util';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { matomoRequestEvent } from '@/utils/matomo-request';
-import { useTranslation } from 'react-i18next';
-import { useAsync, useAsyncFn, useDebounce, useScroll } from 'react-use';
+import { useTranslation, Trans } from 'react-i18next';
+import { useScroll } from 'react-use';
 import { useSize, useDebounceFn, useRequest } from 'ahooks';
 import IconGnosis from 'ui/assets/walletlogo/safe.svg';
 import {
@@ -52,7 +52,6 @@ import {
 import { WaitingSignComponent, WaitingSignMessageComponent } from './map';
 import GnosisDrawer from './TxComponents/GnosisDrawer';
 import Loading from './TxComponents/Loading';
-import { useLedgerDeviceConnected } from '@/ui/utils/ledger';
 import { intToHex } from 'ui/utils/number';
 import { calcMaxPriorityFee } from '@/utils/transaction';
 import { FooterBar } from './FooterBar/FooterBar';
@@ -86,6 +85,8 @@ import {
   ActionRequireData,
   ParsedTransactionActionData,
 } from '@rabby-wallet/rabby-action';
+import { ga4 } from '@/utils/ga4';
+import { EIP7702Warning } from './EIP7702Warning';
 
 interface BasicCoboArgusInfo {
   address: string;
@@ -142,6 +143,12 @@ export const normalizeTxParams = (tx) => {
       if (!tx.data.startsWith('0x')) {
         copy.data = `0x${tx.data}`;
       }
+    }
+
+    if ('authorizationList' in copy) {
+      copy.authorizationList = copy.authorizationList.map((item) => {
+        return normalizeHex(item);
+      });
     }
   } catch (e) {
     Sentry.captureException(
@@ -467,6 +474,7 @@ const SignTx = ({ params, origin }: SignTxProps) => {
   const wallet = useWallet();
   if (!chain) throw new Error('No support chain found');
   const [support1559, setSupport1559] = useState(chain.eip['1559']);
+  const [support7702, setSupport7702] = useState(chain.eip['7702']);
   const [isLedger, setIsLedger] = useState(false);
   const { userData, rules, currentTx, tokenDetail } = useRabbySelector((s) => ({
     userData: s.securityEngine.userData,
@@ -564,11 +572,20 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     isCancel,
     isSend,
     isSwap,
+    isBridge,
     swapPreferMEVGuarded,
     isViewGnosisSafe,
     reqId,
     safeTxGas,
-  } = normalizeTxParams(params.data[0]);
+    authorizationList,
+  } = useMemo(() => {
+    return normalizeTxParams(params.data[0]);
+  }, [params.data]);
+
+  // is eip7702
+  if (authorizationList) {
+    return <EIP7702Warning />;
+  }
 
   const [pushInfo, setPushInfo] = useState<{
     type: TxPushType;
@@ -685,12 +702,13 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     return [
       {
         ...tx,
-        nonce: realNonce,
+        nonce: realNonce || tx.nonce,
         gasPrice: tx.gasPrice || tx.maxFeePerGas,
         gas: gasLimit,
       },
     ] as Tx[];
   }, [tx, realNonce, gasLimit]);
+  const _currentAccount = useRabbySelector((s) => s.account.currentAccount!);
 
   const {
     gasAccountCost,
@@ -699,11 +717,14 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     isGasAccountLogin,
     gasAccountCanPay,
     canGotoUseGasAccount,
+    canDepositUseGasAccount,
+    sig,
   } = useGasAccountTxsCheck({
     isReady,
     txs,
     noCustomRPC,
     isSupportedAddr,
+    currentAccount: _currentAccount,
   });
 
   useEffect(() => {
@@ -920,6 +941,11 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     if (activeApprovalPopup()) {
       return;
     }
+
+    if (account?.type === KEYRING_TYPE.HdKeyring) {
+      await invokeEnterPassphrase(account.address);
+    }
+
     wallet.reportStats('signTransaction', {
       type: KEYRING_TYPE.GnosisKeyring,
       category: KEYRING_CATEGORY_MAP[KEYRING_CLASS.GNOSIS],
@@ -1190,6 +1216,7 @@ const SignTx = ({ params, origin }: SignTxProps) => {
         isGasLess: gasMethod === 'native' ? useGasLess : false,
         isGasAccount: gasAccountCanPay,
         logId: logId.current,
+        sig,
       });
 
       return;
@@ -1216,6 +1243,11 @@ const SignTx = ({ params, origin }: SignTxProps) => {
       action: 'Submit',
       label: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
     });
+
+    ga4.fireEvent(`Submit_${chain?.isTestnet ? 'Custom' : 'Integrated'}`, {
+      event_category: 'Transaction',
+    });
+
     resolveApproval({
       ...transaction,
       nonce: realNonce || tx.nonce,
@@ -1339,10 +1371,11 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     chain: Chain,
     custom?: number
   ): Promise<GasLevel[]> => {
-    const list = await wallet.openapi.gasMarket(
-      chain.serverId,
-      custom && custom > 0 ? custom : undefined
-    );
+    const list = await wallet.gasMarketV2({
+      chain,
+      customGas: custom && custom > 0 ? custom : undefined,
+      tx,
+    });
     setGasList(list);
     return list;
   };
@@ -1458,41 +1491,48 @@ const SignTx = ({ params, origin }: SignTxProps) => {
         throw e;
       }
     }
-    const pendingTxs = await Safe.getPendingTransactions(
-      currentAccount.address,
-      networkId,
-      safeInfo.nonce
-    );
-    const maxNonceTx = maxBy(pendingTxs.results, (item) => item.nonce);
-    let recommendSafeNonce = maxNonceTx ? maxNonceTx.nonce + 1 : safeInfo.nonce;
+    try {
+      const pendingTxs = await Safe.getPendingTransactions(
+        currentAccount.address,
+        networkId,
+        safeInfo.nonce
+      );
+      const maxNonceTx = maxBy(pendingTxs.results, (item) =>
+        Number(item.nonce)
+      );
+      let recommendSafeNonce = maxNonceTx
+        ? Number(maxNonceTx.nonce) + 1
+        : safeInfo.nonce;
+      setSafeInfo(safeInfo);
+      setRecommendNonce(`0x${recommendSafeNonce.toString(16)}`);
 
-    setSafeInfo(safeInfo);
-    setRecommendNonce(`0x${recommendSafeNonce.toString(16)}`);
-
-    if (
-      tx.nonce !== undefined &&
-      tx.nonce !== null &&
-      Number(tx.nonce || '0') >= safeInfo.nonce &&
-      origin === INTERNAL_REQUEST_ORIGIN
-    ) {
-      recommendSafeNonce = Number(tx.nonce || '0');
-      setRecommendNonce(tx.nonce || '0x0');
-    }
-    if (Number(tx.nonce || 0) < safeInfo.nonce) {
-      setTx({
-        ...tx,
-        nonce: `0x${recommendSafeNonce.toString(16)}`,
-      });
-      setRealNonce(`0x${recommendSafeNonce.toString(16)}`);
-    } else {
-      setRealNonce(`0x${Number(tx.nonce).toString(16)}`);
-    }
-    if (tx.nonce === undefined || tx.nonce === null) {
-      setTx({
-        ...tx,
-        nonce: `0x${recommendSafeNonce.toString(16)}`,
-      });
-      setRealNonce(`0x${recommendSafeNonce.toString(16)}`);
+      if (
+        tx.nonce !== undefined &&
+        tx.nonce !== null &&
+        Number(tx.nonce || '0') >= safeInfo.nonce &&
+        origin === INTERNAL_REQUEST_ORIGIN
+      ) {
+        recommendSafeNonce = Number(tx.nonce || '0');
+        setRecommendNonce(tx.nonce || '0x0');
+      }
+      if (Number(tx.nonce || 0) < safeInfo.nonce) {
+        setTx({
+          ...tx,
+          nonce: `0x${recommendSafeNonce.toString(16)}`,
+        });
+        setRealNonce(`0x${recommendSafeNonce.toString(16)}`);
+      } else {
+        setRealNonce(`0x${Number(tx.nonce).toString(16)}`);
+      }
+      if (tx.nonce === undefined || tx.nonce === null) {
+        setTx({
+          ...tx,
+          nonce: `0x${recommendSafeNonce.toString(16)}`,
+        });
+        setRealNonce(`0x${recommendSafeNonce.toString(16)}`);
+      }
+    } catch (e) {
+      throw new Error(t('page.signTx.safeServiceNotAvailable'));
     }
   };
 
@@ -1595,12 +1635,17 @@ const SignTx = ({ params, origin }: SignTxProps) => {
         source: params?.$ctx?.ga?.source || '',
         trigger: params?.$ctx?.ga?.trigger || '',
         networkType: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
+        swapUseSlider: params?.$ctx?.ga?.swapUseSlider ?? '',
       });
 
       matomoRequestEvent({
         category: 'Transaction',
         action: 'init',
         label: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
+      });
+
+      ga4.fireEvent(`Init_${chain?.isTestnet ? 'Custom' : 'Integrated'}`, {
+        event_category: 'Transaction',
       });
 
       if (currentAccount.type === KEYRING_TYPE.GnosisKeyring) {
@@ -1621,7 +1666,11 @@ const SignTx = ({ params, origin }: SignTxProps) => {
         // use cached gasPrice if exist
         customGasPrice = lastTimeGas.gasPrice;
       }
-      if (isSpeedUp || isCancel || ((isSend || isSwap) && tx.gasPrice)) {
+      if (
+        isSpeedUp ||
+        isCancel ||
+        ((isSend || isSwap || isBridge) && tx.gasPrice)
+      ) {
         // use gasPrice set by dapp when it's a speedup or cancel tx
         customGasPrice = parseInt(tx.gasPrice!);
       }
@@ -1630,7 +1679,7 @@ const SignTx = ({ params, origin }: SignTxProps) => {
       let gas: GasLevel | null = null;
 
       if (
-        ((isSend || isSwap) && customGasPrice) ||
+        ((isSend || isSwap || isBridge) && customGasPrice) ||
         isSpeedUp ||
         isCancel ||
         lastTimeGas?.lastTimeSelect === 'gasPrice'
@@ -1689,6 +1738,37 @@ const SignTx = ({ params, origin }: SignTxProps) => {
     if (!isViewGnosisSafe) {
       await wallet.clearGnosisTransaction();
     }
+    // if (SELF_HOST_SAFE_NETWORKS.includes(chainId.toString())) {
+    //   const hasConfirmed = await wallet.hasConfirmSafeSelfHost(
+    //     chainId.toString()
+    //   );
+    //   const sigs = await wallet.getGnosisTransactionSignatures();
+    //   const isNewTx = sigs.length <= 0;
+    //   if (isNewTx && !hasConfirmed) {
+    //     Modal.info({
+    //       closable: false,
+    //       centered: true,
+    //       width: 320,
+    //       className: 'modal-support-darkmode external-link-alert-modal',
+    //       title: t('page.signTx.safeTx.selfHostConfirm.title'),
+
+    //       content: (
+    //         <Trans i18nKey={'page.signTx.safeTx.selfHostConfirm.content'} />
+    //       ),
+    //       okText: t('page.signTx.safeTx.selfHostConfirm.button'),
+    //       okButtonProps: {
+    //         className: 'w-full',
+    //       },
+    //       cancelText: null,
+    //       onOk() {
+    //         wallet.setConfirmSafeSelfHost(chainId.toString());
+    //       },
+    //       onCancel() {
+    //         wallet.setConfirmSafeSelfHost(chainId.toString());
+    //       },
+    //     });
+    //   }
+    // }
   };
 
   const executeSecurityEngine = async () => {
@@ -1996,6 +2076,7 @@ const SignTx = ({ params, origin }: SignTxProps) => {
           <FooterBar
             Header={
               <GasSelectorHeader
+                tx={tx}
                 gasAccountCost={gasAccountCost}
                 gasMethod={gasMethod}
                 onChangeGasMethod={setGasMethod}
@@ -2049,6 +2130,7 @@ const SignTx = ({ params, origin }: SignTxProps) => {
             gasAccountCost={gasAccountCost}
             gasAccountCanPay={gasAccountCanPay}
             canGotoUseGasAccount={canGotoUseGasAccount}
+            canDepositUseGasAccount={canDepositUseGasAccount}
             isGasAccountLogin={isGasAccountLogin}
             isWalletConnect={
               currentAccountType === KEYRING_TYPE.WalletConnectKeyring

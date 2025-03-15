@@ -20,6 +20,7 @@ import { Popup } from '@/ui/component';
 import { useTranslation } from 'react-i18next';
 import { Ledger } from '../../../CommonPopup/Ledger';
 import { useMemoizedFn } from 'ahooks';
+import { DrawerProps } from 'antd';
 
 interface Props extends ActionGroupProps {
   chain?: Chain;
@@ -43,6 +44,7 @@ interface Props extends ActionGroupProps {
   isGasNotEnough?: boolean;
   task: BatchSignTxTaskType;
   footer?: ReactNode;
+  getContainer?: DrawerProps['getContainer'];
 }
 
 export const MiniLedgerAction: React.FC<Props> = ({
@@ -66,6 +68,7 @@ export const MiniLedgerAction: React.FC<Props> = ({
   account,
   footer,
   onSubmit,
+  getContainer,
   ...props
 }) => {
   const { isDarkTheme } = useThemeMode();
@@ -89,10 +92,10 @@ export const MiniLedgerAction: React.FC<Props> = ({
       }
     };
 
-    eventBus.addEventListener(EVENTS.LEDGER.REJECTED, listener);
+    eventBus.addEventListener(EVENTS.COMMON_HARDWARE.REJECTED, listener);
 
     return () => {
-      eventBus.removeEventListener(EVENTS.LEDGER.REJECTED, listener);
+      eventBus.removeEventListener(EVENTS.COMMON_HARDWARE.REJECTED, listener);
     };
   }, []);
 
@@ -106,7 +109,7 @@ export const MiniLedgerAction: React.FC<Props> = ({
 
   React.useEffect(() => {
     if (task.status === 'active' && status === 'DISCONNECTED') {
-      eventBus.emit(EVENTS.LEDGER.REJECTED, 'DISCONNECTED');
+      eventBus.emit(EVENTS.COMMON_HARDWARE.REJECTED, 'DISCONNECTED');
     }
   }, [task.status, status]);
   const { t } = useTranslation();
@@ -122,6 +125,7 @@ export const MiniLedgerAction: React.FC<Props> = ({
         maskStyle={{
           backgroundColor: 'transparent',
         }}
+        getContainer={getContainer}
       >
         <Ledger isModalContent />
       </Popup>

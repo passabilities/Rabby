@@ -1,18 +1,50 @@
-import { intToHex, isHexString } from 'ethereumjs-util';
+import { intToHex, isHexString } from '@ethereumjs/util';
 import BigNumber from 'bignumber.js';
 import {
   CAN_ESTIMATE_L1_FEE_CHAINS,
+  DEFAULT_GAS_LIMIT_BUFFER,
   DEFAULT_GAS_LIMIT_RATIO,
   GASPRICE_RANGE,
   KEYRING_CATEGORY_MAP,
   MINIMUM_GAS_LIMIT,
+  SAFE_GAS_LIMIT_BUFFER,
   SAFE_GAS_LIMIT_RATIO,
 } from 'consts';
-import { ExplainTxResponse, GasLevel, Tx } from 'background/service/openapi';
+import {
+  ExplainTxResponse,
+  GasLevel,
+  Tx,
+  TxPushType,
+} from 'background/service/openapi';
 import { findChain } from './chain';
 import type { WalletControllerType } from '@/ui/utils';
 import { Chain } from '@debank/common';
 import i18n from '@/i18n';
+import { Account } from 'background/service/preference';
+
+export interface ApprovalRes extends Tx {
+  type?: string;
+  address?: string;
+  uiRequestComponent?: string;
+  isSend?: boolean;
+  isSpeedUp?: boolean;
+  isCancel?: boolean;
+  isSwap?: boolean;
+  isGnosis?: boolean;
+  account?: Account;
+  extra?: Record<string, any>;
+  traceId?: string;
+  $ctx?: any;
+  signingTxId?: string;
+  pushType?: TxPushType;
+  lowGasDeadline?: number;
+  reqId?: string;
+  isGasLess?: boolean;
+  isGasAccount?: boolean;
+  logId?: string;
+  authorizationList?: (Uint8Array | string)[];
+  sig?: string;
+}
 
 export const validateGasPriceRange = (tx: Tx) => {
   const chain = findChain({
@@ -61,6 +93,19 @@ export const is1559Tx = (tx: Tx) => {
   return isHexString(tx.maxFeePerGas!) && isHexString(tx.maxPriorityFeePerGas!);
 };
 
+export const is7702Tx = (tx: ApprovalRes) => {
+  if ('authorizationList' in tx) {
+    if (
+      Array.isArray(tx.authorizationList) &&
+      tx.authorizationList.length > 0
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 export function getKRCategoryByType(type?: string) {
   return KEYRING_CATEGORY_MAP[type as any] || null;
 }
@@ -73,6 +118,9 @@ export const calcMaxPriorityFee = (
   useMaxFee: boolean
 ) => {
   if (target.priority_price && target.priority_price !== null) {
+    if (target.priority_price > target.price) {
+      return target.price;
+    }
     return target.priority_price;
   }
 
@@ -167,8 +215,13 @@ export async function calcGasLimit({
   let recommendGasLimit = needRatio
     ? gas.times(ratio).toFixed(0)
     : gas.toFixed(0);
-  if (block && new BigNumber(recommendGasLimit).gt(block.gasLimit)) {
-    recommendGasLimit = new BigNumber(block.gasLimit).times(0.95).toFixed(0);
+  const blockGasRatio = SAFE_GAS_LIMIT_BUFFER[chain.id] || 1;
+  if (
+    block &&
+    new BigNumber(block.gasLimit).times(blockGasRatio).lt(recommendGasLimit)
+  ) {
+    const buffer = SAFE_GAS_LIMIT_BUFFER[chain.id] || DEFAULT_GAS_LIMIT_BUFFER;
+    recommendGasLimit = new BigNumber(block.gasLimit).times(buffer).toFixed(0);
   }
   const gasLimit = intToHex(
     Math.max(Number(recommendGasLimit), Number(tx.gas || 0))

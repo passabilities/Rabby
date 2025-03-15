@@ -23,6 +23,7 @@ import {
   ActionRequireData,
   ParsedTransactionActionData,
 } from '@rabby-wallet/rabby-action';
+import { uninstalledService } from '.';
 
 export interface TransactionHistoryItem {
   rawTx: Tx;
@@ -91,6 +92,8 @@ class TxHistory {
   private _txHistoryLimit = 100;
 
   addSigningTx(tx: Tx) {
+    uninstalledService.setTx();
+
     const id = nanoid();
 
     this._signingTxList.push({
@@ -233,9 +236,11 @@ class TxHistory {
     tx,
     explain,
     origin,
+    actionData,
   }: {
     tx: TransactionHistoryItem;
     explain: TransactionGroup['explain'];
+    actionData: TransactionGroup['action'];
     origin: string;
   }) {
     const nonce = Number(tx.rawTx.nonce);
@@ -260,6 +265,10 @@ class TxHistory {
     }
     if (explain) {
       tx.explain = explain;
+    }
+
+    if (actionData) {
+      tx.action = actionData;
     }
 
     if (!this.store.transactions[from]) {
@@ -287,6 +296,7 @@ class TxHistory {
             createdAt: tx.createdAt,
             isPending: true,
             explain: explain,
+            action: actionData,
             isFailed: false,
             isSubmitFailed: true,
           },
@@ -853,6 +863,36 @@ class TxHistory {
     });
   }
 
+  removeLocalPendingTx({
+    address,
+    chainId,
+    nonce,
+  }: {
+    address: string;
+    chainId: number;
+    nonce: number;
+  }) {
+    const transactions = this.store.transactions[address.toLowerCase()];
+    if (!transactions) return;
+    this._setStoreTransaction({
+      ...this.store.transactions,
+      [address.toLowerCase()]: Object.values(transactions)
+        .filter((transaction) => {
+          return !(
+            transaction.isPending &&
+            +chainId === +transaction.chainId &&
+            +transaction.nonce === +nonce
+          );
+        })
+        .reduce((res, current) => {
+          return {
+            ...res,
+            [`${current.chainId}-${current.nonce}`]: current,
+          };
+        }, {}),
+    });
+  }
+
   getPendingTxByHash(hash: string) {
     for (const address in this.store.transactions) {
       const addressTxMap = this.store.transactions[address];
@@ -911,34 +951,6 @@ class TxHistory {
     }
 
     return maxLocalOrProcessingNonce + 1;
-  }
-
-  getSkipedTxs(address: string) {
-    const dict = groupBy(
-      Object.values(this.store.transactions[address.toLowerCase()] || {}),
-      (item) => item.chainId
-    );
-
-    return Object.entries(dict).reduce((res, [key, list]) => {
-      const maxNonce =
-        maxBy(
-          list.filter((item) => {
-            const maxGasTx = findMaxGasTx(item.txs);
-            return !item.isSubmitFailed && !maxGasTx?.isWithdrawed;
-          }),
-          (item) => item.nonce
-        )?.nonce || 0;
-
-      res[key] = sortBy(
-        list.filter(
-          (item) =>
-            item.nonce < maxNonce && findMaxGasTx(item.txs)?.isWithdrawed
-        ),
-        (item) => -item.nonce
-      );
-
-      return res;
-    }, {} as Record<string, TransactionGroup[]>);
   }
 
   quickCancelTx = async ({

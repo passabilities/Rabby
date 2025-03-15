@@ -137,7 +137,7 @@ const SendNFT = ({
               <Values.AddressMemo address={actionData.to} />
             </SubRow>
           </SubCol>
-          {!!requireData.contract && (
+          {!!requireData.name && (
             <SubCol>
               <SubRow isTitle>{t('page.signTx.addressTypeTitle')}</SubRow>
               <SubRow>{t('page.signTx.contract')}</SubRow>
@@ -146,10 +146,7 @@ const SendNFT = ({
           {!!requireData.name && (
             <SubCol nested>
               <SubRow> </SubRow>
-              <SubRow>
-                {requireData.name.replace(/^Token: /, 'Token ') +
-                  ' contract address'}
-              </SubRow>
+              <SubRow>{requireData.name.replace(/^Token: /, 'Token ')}</SubRow>
             </SubCol>
           )}
           <SecurityListItem
@@ -186,7 +183,7 @@ const SendNFT = ({
                     textStyle={{
                       fontSize: '13px',
                       lineHeight: '15px',
-                      color: '#4B4D59',
+                      color: 'var(--r-neutral-body, #4B4D59)',
                       fontWeight: 'normal',
                     }}
                   />

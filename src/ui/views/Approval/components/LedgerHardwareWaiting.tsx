@@ -23,6 +23,7 @@ import {
   Props as ApprovalPopupContainerProps,
 } from './Popup/ApprovalPopupContainer';
 import { isLedgerLockError } from '@/ui/utils/ledger';
+import { ga4 } from '@/utils/ga4';
 
 interface ApprovalParams {
   address: string;
@@ -152,10 +153,7 @@ const LedgerHardwareWaiting = ({ params }: { params: ApprovalParams }) => {
         method: params?.extra?.signTextMethod,
       });
     }
-    eventBus.addEventListener(EVENTS.LEDGER.REJECT_APPROVAL, (data) => {
-      rejectApproval(data, false, true);
-    });
-    eventBus.addEventListener(EVENTS.LEDGER.REJECTED, async (data) => {
+    eventBus.addEventListener(EVENTS.COMMON_HARDWARE.REJECTED, async (data) => {
       setErrorMessage(data);
       if (/DisconnectedDeviceDuringOperation/i.test(data)) {
         await rejectApproval('User rejected the request.');
@@ -199,6 +197,10 @@ const LedgerHardwareWaiting = ({ params }: { params: ApprovalParams }) => {
           category: 'Transaction',
           action: 'Submit',
           label: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
+        });
+
+        ga4.fireEvent(`Submit_${chain?.isTestnet ? 'Custom' : 'Integrated'}`, {
+          event_category: 'Transaction',
         });
 
         setSignFinishedData({

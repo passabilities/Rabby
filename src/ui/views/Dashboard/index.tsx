@@ -37,7 +37,6 @@ import {
   BalanceView,
   ChainAndSiteSelector,
   GnosisWrongChainAlertBar,
-  DefaultWalletSetting,
 } from './components';
 import './style.less';
 
@@ -50,12 +49,11 @@ import Queue from './components/Queue';
 import { copyAddress } from '@/ui/utils/clipboard';
 import { useWalletConnectIcon } from '@/ui/component/WalletConnect/useWalletConnectIcon';
 import { useGnosisNetworks } from '@/ui/hooks/useGnosisNetworks';
-import { useGnosisPendingTxs } from '@/ui/hooks/useGnosisPendingTxs';
 import { CommonSignal } from '@/ui/component/ConnectStatus/CommonSignal';
 import { useHomeBalanceViewOuterPrefetch } from './components/BalanceView/useHomeBalanceView';
-import { EcologyPopup } from './components/EcologyPopup';
 import { GasAccountDashBoardHeader } from '../GasAccount/components/DashBoardHeader';
 import { useGnosisPendingCount } from '@/ui/hooks/useGnosisPendingCount';
+import { ga4 } from '@/utils/ga4';
 
 const Dashboard = () => {
   const history = useHistory();
@@ -274,6 +272,11 @@ const Dashboard = () => {
       action: 'Click',
       label: 'Gas Account',
     });
+
+    ga4.fireEvent('Click_GasAccount', {
+      event_category: 'Front Page Click',
+    });
+
     history.push('/gas-account');
   };
   const { dashboardBalanceCacheInited } = useHomeBalanceViewOuterPrefetch(
@@ -308,6 +311,11 @@ const Dashboard = () => {
       action: 'Click',
       label: 'Change Address',
     });
+
+    ga4.fireEvent('Click_ChangeAddress', {
+      event_category: 'Front Page Click',
+    });
+
     history.push('/switch-address');
   };
 
@@ -386,6 +394,10 @@ const Dashboard = () => {
                       getKRCategoryByType(currentAccount?.type),
                       currentAccount?.brandName,
                     ].join('|'),
+                  });
+
+                  ga4.fireEvent('Click_CopyAddress', {
+                    event_category: 'Front Page Click',
                   });
                 }}
               />
@@ -538,7 +550,6 @@ const Dashboard = () => {
           </div>
         </div>
       </Modal>
-      {!(showToken || showAssets || showNFT) && <DefaultWalletSetting />}
       {pendingApprovalCount > 0 && (
         <PendingApproval
           onRejectAll={() => {

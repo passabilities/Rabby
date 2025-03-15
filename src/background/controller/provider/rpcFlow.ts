@@ -12,7 +12,7 @@ import { resemblesETHAddress } from '@/utils';
 import { ProviderRequest } from './type';
 import * as Sentry from '@sentry/browser';
 import stats from '@/stats';
-import { addHexPrefix, stripHexPrefix } from 'ethereumjs-util';
+import { addHexPrefix, stripHexPrefix } from '@ethereumjs/util';
 import { findChain } from '@/utils/chain';
 import { waitSignComponentAmounted } from '@/utils/signEvent';
 import { gnosisController } from './gnosisController';
@@ -69,13 +69,22 @@ const flowContext = flow
       mapMethod,
       request: {
         session: { origin },
+        data,
       },
     } = ctx;
 
     if (!Reflect.getMetadata('SAFE', providerController, mapMethod)) {
       // check lock
       const isUnlock = keyringService.memStore.getState().isUnlocked;
+      const isConnected = permissionService.hasPermission(origin);
+      const hasOtherProvider = !!data?.$ctx?.providers?.length;
 
+      /**
+       * if not connected and has other provider ignore lock check
+       */
+      if (!isConnected && hasOtherProvider) {
+        return next();
+      }
       if (!isUnlock) {
         if (lockedOrigins.has(origin)) {
           throw ethErrors.rpc.resourceNotFound(
@@ -104,6 +113,7 @@ const flowContext = flow
     const {
       request: {
         session: { origin, name, icon },
+        data,
       },
       mapMethod,
     } = ctx;
@@ -117,12 +127,13 @@ const flowContext = flow
         ctx.request.requestedApproval = true;
         connectOrigins.add(origin);
         try {
+          const isUnlock = keyringService.memStore.getState().isUnlocked;
           const { defaultChain } = await notificationService.requestApproval(
             {
-              params: { origin, name, icon },
+              params: { origin, name, icon, $ctx: data.$ctx },
               approvalComponent: 'Connect',
             },
-            { height: 800 }
+            { height: isUnlock ? 800 : 628 }
           );
           connectOrigins.delete(origin);
           permissionService.addConnectedSiteV2({
@@ -263,15 +274,21 @@ const flowContext = flow
             })
             .then(resolve)
             .catch((e: any) => {
+              const payload = {
+                method: EVENTS.SIGN_FINISHED,
+                params: {
+                  success: false,
+                  errorMsg: e?.message || JSON.stringify(e),
+                },
+              };
+              if (e.method) {
+                payload.method = e.method;
+                payload.params = e.message;
+              }
+
               Sentry.captureException(e);
               if (isSignApproval(approvalType)) {
-                eventBus.emit(EVENTS.broadcastToUI, {
-                  method: EVENTS.SIGN_FINISHED,
-                  params: {
-                    success: false,
-                    errorMsg: e?.message || JSON.stringify(e),
-                  },
-                });
+                eventBus.emit(EVENTS.broadcastToUI, payload);
               }
             })
         );
@@ -312,7 +329,6 @@ const flowContext = flow
           flow.requestedApproval = false;
           // only unlock notification if current flow is an approval flow
           notificationService.unLock();
-          keyringService.resetResend();
         }
         return gnosisController.watchMessage({
           address: safeMessage.safeAddress,
@@ -379,7 +395,6 @@ export default (request: ProviderRequest) => {
       flow.requestedApproval = false;
       // only unlock notification if current flow is an approval flow
       notificationService.unLock();
-      keyringService.resetResend();
     }
   });
 };

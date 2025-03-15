@@ -126,7 +126,7 @@ const Send = ({
               </SubRow>
             </SubCol>
           )}
-          {!!requireData.contract && (
+          {!!requireData.name && (
             <SubCol>
               <SubRow isTitle>{t('page.signTx.addressTypeTitle')}</SubRow>
               <SubRow>{t('page.signTx.contract')}</SubRow>
@@ -150,8 +150,7 @@ const Send = ({
                     }}
                   />
                 ) : (
-                  requireData.name.replace(/^Token: /, 'Token ') +
-                  ' contract address'
+                  requireData.name.replace(/^Token: /, 'Token ')
                 )}
               </SubRow>
             </SubCol>
@@ -191,7 +190,7 @@ const Send = ({
                     textStyle={{
                       fontSize: '13px',
                       lineHeight: '15px',
-                      color: '#4B4D59',
+                      color: 'var(--r-neutral-body, #4B4D59)',
                       fontWeight: 'normal',
                     }}
                   />

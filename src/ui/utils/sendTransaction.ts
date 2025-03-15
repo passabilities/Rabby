@@ -32,6 +32,7 @@ export enum FailedCode {
   GasNotEnough = 'GasNotEnough',
   GasTooHigh = 'GasTooHigh',
   SubmitTxFailed = 'SubmitTxFailed',
+  SimulationFailed = 'SimulationFailed',
   DefaultFailed = 'DefaultFailed',
 }
 
@@ -108,6 +109,7 @@ export const sendTransaction = async ({
   ignoreGasNotEnoughCheck,
   onUseGasAccount,
   ga,
+  sig,
 }: {
   tx: Tx;
   chainServerId: string;
@@ -128,6 +130,7 @@ export const sendTransaction = async ({
   waitCompleted?: boolean;
   pushType?: TxPushType;
   ga?: Record<string, any>;
+  sig?: string;
 }) => {
   onProgress?.('building');
   const chain = findChain({
@@ -143,7 +146,10 @@ export const sendTransaction = async ({
   // get gas
   let normalGas = gasLevel;
   if (!normalGas) {
-    const gasMarket = await wallet.openapi.gasMarket(chainServerId);
+    const gasMarket = await wallet.gasMarketV2({
+      chain,
+      tx,
+    });
     normalGas = gasMarket.find((item) => item.level === 'normal')!;
   }
 
@@ -157,6 +163,7 @@ export const sendTransaction = async ({
     source: ga?.source || '',
     trigger: ga?.trigger || '',
     networkType: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
+    swapUseSlider: ga?.swapUseSlider ?? '',
   });
 
   // pre exec tx
@@ -252,6 +259,10 @@ export const sendTransaction = async ({
     ? (await Browser.storage.local.get('DEBUG_OTHER_CHAIN_GAS_USD_LIMIT'))
         .DEBUG_OTHER_CHAIN_GAS_USD_LIMIT || 5
     : 5;
+  const DEBUG_SIMULATION_FAILED = process.env.DEBUG
+    ? (await Browser.storage.local.get('DEBUG_SIMULATION_FAILED'))
+        .DEBUG_SIMULATION_FAILED
+    : false;
 
   // generate tx with gas
   const transaction: Tx = {
@@ -266,7 +277,13 @@ export const sendTransaction = async ({
 
   let failedCode;
   let canUseGasAccount: boolean = false;
-  if (isGasNotEnough) {
+
+  // random simulation failed for test
+  if (DEBUG_SIMULATION_FAILED && Math.random() > 0.5) {
+    failedCode = FailedCode.SimulationFailed;
+  } else if (!preExecResult?.balance_change?.success) {
+    failedCode = FailedCode.SimulationFailed;
+  } else if (isGasNotEnough) {
     //  native gas not enough check gasAccount
     if (autoUseGasAccount && gasAccount?.sig && gasAccount?.accountId) {
       const gasAccountCanPay = await checkEnoughUseGasAccount({
@@ -445,44 +462,46 @@ export const sendTransaction = async ({
     }
   };
 
+  wallet.reportStats('signTransaction', {
+    type: currentAccount.brandName,
+    category: KEYRING_CATEGORY_MAP[currentAccount.type],
+    chainId: chain.serverId,
+    createdBy: ga ? 'rabby' : 'dapp',
+    source: ga?.source || '',
+    trigger: ga?.trigger || '',
+    networkType: chain?.isTestnet ? 'Custom Network' : 'Integrated Network',
+  });
+
   // submit tx
   let hash = '';
   try {
-    hash = await Promise.race([
-      wallet.ethSendTransaction({
-        data: {
-          $ctx: {
-            ga,
-          },
-          params: [transaction],
+    hash = await wallet.ethSendTransaction({
+      data: {
+        $ctx: {
+          ga,
         },
-        session: INTERNAL_REQUEST_SESSION,
-        approvalRes: {
-          ...transaction,
-          signingTxId,
-          logId: logId,
-          lowGasDeadline,
-          isGasLess,
-          isGasAccount: autoUseGasAccount ? canUseGasAccount : isGasAccount,
-          pushType,
-        },
-        pushed: false,
-        result: undefined,
-      }),
-      new Promise((_, reject) => {
-        eventBus.once(EVENTS.LEDGER.REJECTED, async (data) => {
-          if (signingTxId != null) {
-            wallet.removeSigningTx(signingTxId);
-          }
-          reject(new Error(data));
-        });
-      }),
-    ]);
+        params: [transaction],
+      },
+      session: INTERNAL_REQUEST_SESSION,
+      approvalRes: {
+        ...transaction,
+        signingTxId,
+        logId: logId,
+        lowGasDeadline,
+        isGasLess,
+        isGasAccount: autoUseGasAccount ? canUseGasAccount : isGasAccount,
+        pushType,
+        sig,
+      },
+      pushed: false,
+      result: undefined,
+    });
     await handleSendAfter();
   } catch (e) {
     await handleSendAfter();
     const err = new Error(e.message);
     err.name = FailedCode.SubmitTxFailed;
+    eventBus.emit(EVENTS.COMMON_HARDWARE.REJECTED, e.message);
     throw err;
   }
 

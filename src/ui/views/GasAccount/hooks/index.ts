@@ -7,6 +7,11 @@ import React, { useRef } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAsync } from 'react-use';
 import { useGasAccountRefreshId, useGasAccountSetRefreshId } from './context';
+import { preferenceService } from '@/background/service';
+import { sendPersonalMessage } from '@/ui/utils/sendPersonalMessage';
+import { KEYRING_CLASS } from '@/constant';
+import pRetry from 'p-retry';
+import { Account } from '@/background/service/preference';
 
 export const useGasAccountRefresh = () => {
   const refreshId = useGasAccountRefreshId();
@@ -58,14 +63,78 @@ export const useGasAccountInfo = () => {
 
 export const useGasAccountMethods = () => {
   const wallet = useWallet();
+  const currentAccount = useRabbySelector((s) => s.account.currentAccount);
   const dispatch = useRabbyDispatch();
 
   const { sig, accountId } = useGasAccountSign();
+  const { refresh } = useGasAccountRefresh();
 
-  const login = useCallback(async () => {
-    wallet.signGasAccount();
-    window.close();
-  }, []);
+  const handleNoSignLogin = useCallback(
+    async (account: Account) => {
+      if (account) {
+        const currentUseAccount = currentAccount;
+        const shouldSwitchAccount =
+          currentUseAccount?.address !== account.address ||
+          currentUseAccount?.type !== account.type ||
+          currentUseAccount?.brandName !== account.brandName;
+
+        const resume = async () => {
+          if (currentUseAccount && shouldSwitchAccount) {
+            await dispatch.account.changeAccountAsync(currentUseAccount);
+          }
+        };
+        try {
+          const { text } = await wallet.openapi.getGasAccountSignText(
+            account.address
+          );
+
+          if (shouldSwitchAccount) {
+            await dispatch.account.changeAccountAsync(account);
+          }
+
+          const { txHash: signature } = await sendPersonalMessage({
+            data: [text, account.address],
+            wallet,
+          });
+
+          const result = await pRetry(
+            async () =>
+              wallet.openapi.loginGasAccount({
+                sig: signature,
+                account_id: account.address,
+              }),
+            {
+              retries: 2,
+            }
+          );
+          if (result?.success) {
+            dispatch.gasAccount.setGasAccountSig({ sig: signature, account });
+            refresh();
+          }
+          await resume();
+        } catch (e) {
+          message.error('Login in error, Please retry');
+          await resume();
+        }
+      }
+    },
+    [currentAccount]
+  );
+
+  const login = useCallback(
+    async (account: Account) => {
+      const noSignType =
+        account?.type === KEYRING_CLASS.PRIVATE_KEY ||
+        account?.type === KEYRING_CLASS.MNEMONIC;
+      if (noSignType) {
+        handleNoSignLogin(account);
+      } else {
+        wallet.signGasAccount(account);
+        window.close();
+      }
+    },
+    [currentAccount, handleNoSignLogin]
+  );
 
   const logout = useCallback(async () => {
     if (sig && accountId) {
@@ -125,6 +194,7 @@ export const useGasAccountHistory = () => {
     mutate,
   } = useInfiniteScroll<{
     rechargeList: History['recharge_list'];
+    withdrawList: History['withdraw_list'];
     list: History['history_list'];
     totalCount: number;
   }>(
@@ -138,9 +208,11 @@ export const useGasAccountHistory = () => {
 
       const rechargeList = data.recharge_list;
       const historyList = data.history_list;
+      const withdrawList = data.withdraw_list;
 
       return {
         rechargeList: rechargeList || [],
+        withdrawList: withdrawList || [],
         list: historyList,
         totalCount: data.pagination.total,
       };
@@ -152,7 +224,9 @@ export const useGasAccountHistory = () => {
         if (data) {
           return (
             data.totalCount <=
-            (data.list.length || 0) + (data?.rechargeList?.length || 0)
+            (data.list.length || 0) +
+              (data?.rechargeList?.length || 0) +
+              (data?.withdrawList?.length || 0)
           );
         }
         return true;
@@ -179,10 +253,14 @@ export const useGasAccountHistory = () => {
           return;
         }
 
-        if (value?.recharge_list?.length !== d.rechargeList.length) {
+        if (
+          value?.recharge_list?.length !== d.rechargeList.length ||
+          value?.withdraw_list?.length !== d.withdrawList.length
+        ) {
           refreshGasAccountBalance();
         }
         return {
+          withdrawList: value?.withdraw_list,
           rechargeList: value?.recharge_list,
           totalCount: value.pagination.total,
           list: uniqBy(
@@ -206,7 +284,10 @@ export const useGasAccountHistory = () => {
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (!loading && !loadingMore && !!txList?.rechargeList?.length) {
+    const hasSomePending = Boolean(
+      txList?.rechargeList?.length || txList?.withdrawList?.length
+    );
+    if (!loading && !loadingMore && hasSomePending) {
       timer = setTimeout(refreshListTx, 2000);
     }
     return () => {
